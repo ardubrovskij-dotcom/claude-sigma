@@ -1,9 +1,9 @@
 // Конфигурация для Cloudflare Workers Builds / кнопки Deploy: ретранслятор из relay/ развёртывается
-// из корня репозитория. Имя Worker — по имени репозитория (так его создаёт Cloudflare при импорте).
+// из корня репозитория. Имя Worker в Cloudflare должно совпадать с "name" ниже.
 // Для ручного развёртывания из папки relay/ используется relay/wrangler.jsonc.
 {
   "$schema": "relay/node_modules/wrangler/config-schema.json",
-  "name": "claude-sigma",
+  "name": "claude-figma-relay",
   "main": "relay/src/index.ts",
   "compatibility_date": "2025-09-01",
   "durable_objects": {
