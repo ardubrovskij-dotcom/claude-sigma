@@ -68,7 +68,7 @@ plugin.on("message", (raw) => {
 await wait(200);
 
 r = await call("figma_status");
-assert.deepEqual(JSON.parse(text(r)), { connected: true, file: "Deck", pages: [{ id: "0:1", name: "Page 1" }] });
+assert.deepEqual(JSON.parse(text(r)), { connected: true, bridge: "primary", file: "Deck", pages: [{ id: "0:1", name: "Page 1" }] });
 
 r = await call("figma_batch", { commands: [{ command: "create_frame", params: { width: 1920 } }, { command: "create_text", params: { parentId: "$0" } }] });
 assert(!r.isError); assert.equal(JSON.parse(text(r)).results.length, 2);

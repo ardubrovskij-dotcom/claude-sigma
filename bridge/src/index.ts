@@ -16,28 +16,46 @@ const PORT = Number(setting(process.env.SIGMA_PORT)) || 3055;
 const TOKEN = setting(process.env.SIGMA_TOKEN);
 const COMMAND_TIMEOUT_MS = 30_000;
 const BATCH_TIMEOUT_MS = 180_000;
-const VERSION = "0.1.1";
+const VERSION = "0.2.0";
 const ALLOWED_ORIGINS = new Set(["null", "https://www.figma.com"]);
 
 const log = (...args: unknown[]) => console.error("[claude-sigma]", ...args);
 
 // ---------- Связь с плагином ----------
+//
+// Порт один, а копий моста может быть несколько: Claude Desktop и сессии Claude Code
+// в разных репозиториях запускают каждая свою. Первая копия занимает порт (основная) и
+// держит связь с плагином; остальные подключаются к ней как клиенты (вспомогательные)
+// и пересылают команды через неё. Если основная закрывается, одна из вспомогательных
+// занимает порт, а плагин переподключается сам.
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout };
+type Relayed = { client: WebSocket; id: string; timer: NodeJS.Timeout };
+
+const PLUGIN_HINT =
+  "Плагин не подключён. В Figma Desktop: Plugins → Development → Claude for Figma by Dubrovskiy → «Подключить» " +
+  `(адрес ws://localhost:${PORT}).`;
 
 class PluginLink {
-  private socket: WebSocket | null = null;
-  private pending = new Map<string, Pending>();
+  private mode: "starting" | "primary" | "secondary" = "starting";
+  private plugin: WebSocket | null = null; // основная копия: сокет плагина
+  private upstream: WebSocket | null = null; // вспомогательная: сокет к основной копии
+  private pending = new Map<string, Pending>(); // собственные команды этой копии
+  private relayed = new Map<string, Relayed>(); // основная: команды других копий
   private seq = 0;
-  private listening = false;
   private lastError = "";
 
   start(): void {
+    this.listen();
+  }
+
+  private listen(): void {
     const wss = new WebSocketServer({
       host: "127.0.0.1",
       port: PORT,
-      // UI плагина Figma работает в iframe с origin "null". Любой сайт в браузере имеет
-      // настоящий origin — такие подключения отклоняем, чтобы страницы не управляли макетом.
+      // UI плагина Figma работает в iframe с origin "null"; другие копии моста (Node) origin
+      // не передают. Любой сайт в браузере имеет настоящий origin — такие подключения
+      // отклоняем, чтобы страницы не управляли макетом.
       verifyClient: ({ origin }: { origin?: string }) => {
         const ok = !origin || ALLOWED_ORIGINS.has(origin);
         if (!ok) log(`отклонено подключение с origin ${origin}`);
@@ -45,57 +63,87 @@ class PluginLink {
       },
     });
     wss.on("listening", () => {
-      this.listening = true;
+      this.mode = "primary";
       this.lastError = "";
-      log(`ожидаю плагин на ws://127.0.0.1:${PORT}`);
+      log(`основная копия: ожидаю плагин на ws://127.0.0.1:${PORT}`);
     });
     wss.on("error", (err: NodeJS.ErrnoException) => {
-      this.listening = false;
-      this.lastError =
-        err.code === "EADDRINUSE"
-          ? `порт ${PORT} занят (возможно, запущена вторая копия моста)`
-          : err.message;
-      log("ошибка сервера:", this.lastError, "— повтор через 5 с");
       wss.close();
-      setTimeout(() => this.start(), 5000);
+      if (err.code === "EADDRINUSE") return this.connectUpstream();
+      this.lastError = err.message;
+      log("ошибка сервера:", err.message, "— повтор через 5 с");
+      setTimeout(() => this.listen(), 5000);
     });
     wss.on("connection", (ws) => this.accept(ws));
   }
 
+  // Порт занят: пробуем работать через основную копию моста.
+  private connectUpstream(): void {
+    const ws = new WebSocket(`ws://127.0.0.1:${PORT}`);
+    const noWelcome = setTimeout(() => {
+      this.lastError = `порт ${PORT} занят другой программой`;
+      ws.terminate();
+    }, 3000);
+    ws.on("open", () => ws.send(JSON.stringify({ type: "hello", role: "bridge-relay", token: TOKEN || undefined })));
+    ws.on("message", (raw) => {
+      const msg = parse(raw);
+      if (!msg) return;
+      if (msg.type === "welcome") {
+        clearTimeout(noWelcome);
+        this.upstream = ws;
+        this.mode = "secondary";
+        this.lastError = "";
+        log(`вспомогательная копия: порт ${PORT} занят другой копией моста, работаю через неё`);
+      } else if (msg.type === "error") {
+        this.lastError = msg.message;
+      } else if (msg.type === "result") {
+        this.settle(msg);
+      }
+    });
+    ws.on("error", () => {}); // за ошибкой всегда следует close
+    ws.on("close", () => {
+      clearTimeout(noWelcome);
+      if (this.upstream === ws) {
+        this.upstream = null;
+        this.failPending("Основная копия моста закрылась во время выполнения команды — повторите");
+        log("основная копия моста закрылась, пробую занять порт");
+      }
+      this.mode = "starting";
+      // Небольшой разброс, чтобы несколько вспомогательных копий не боролись за порт одновременно.
+      setTimeout(() => this.listen(), 500 + Math.floor(Math.random() * 1000));
+    });
+  }
+
   private accept(ws: WebSocket): void {
-    let authorized = !TOKEN;
+    let role: "plugin" | "relay" | null = null;
     const authTimer = setTimeout(() => {
-      if (!authorized) ws.close(4001, "no hello");
+      if (!role) ws.close(4001, "no hello");
     }, 5000);
 
     ws.on("message", (raw) => {
-      let msg: any;
-      try {
-        msg = JSON.parse(String(raw));
-      } catch {
-        return;
-      }
+      const msg = parse(raw);
+      if (!msg) return;
       if (msg.type === "hello") {
         if (TOKEN && msg.token !== TOKEN) {
           ws.send(JSON.stringify({ type: "error", message: "Неверный токен моста" }));
           ws.close(4003, "bad token");
           return;
         }
-        authorized = true;
         clearTimeout(authTimer);
-        if (this.socket && this.socket !== ws) this.socket.close(4000, "replaced");
-        this.socket = ws;
+        if (msg.role === "bridge-relay") {
+          role = "relay";
+          log("подключилась вспомогательная копия моста");
+        } else {
+          role = "plugin";
+          if (this.plugin && this.plugin !== ws) this.plugin.close(4000, "replaced");
+          this.plugin = ws;
+          log("плагин подключён");
+        }
         ws.send(JSON.stringify({ type: "welcome", message: `Claude for Figma Bridge ${VERSION} готов` }));
-        log("плагин подключён");
         return;
       }
-      if (!authorized || msg.type !== "result") return;
-      const p = this.pending.get(String(msg.id));
-      if (!p) return;
-      this.pending.delete(String(msg.id));
-      clearTimeout(p.timer);
-      if (msg.error) p.reject(new Error(msg.error));
-      else p.resolve(msg.result);
+      if (role === "plugin" && msg.type === "result") return this.fromPlugin(msg);
+      if (role === "relay" && msg.command && msg.id !== undefined) return this.relay(ws, msg);
     });
 
     // Keep-alive: плагин отвечает pong; заодно проверяем, что сокет жив.
@@ -106,31 +154,85 @@ class PluginLink {
     ws.on("close", () => {
       clearInterval(ping);
       clearTimeout(authTimer);
-      if (this.socket === ws) {
-        this.socket = null;
+      if (role === "relay") {
+        for (const [rid, r] of this.relayed) {
+          if (r.client !== ws) continue;
+          clearTimeout(r.timer);
+          this.relayed.delete(rid);
+        }
+      }
+      if (this.plugin === ws) {
+        this.plugin = null;
         log("плагин отключён");
-        for (const [id, p] of this.pending) {
-          clearTimeout(p.timer);
-          p.reject(new Error("Плагин отключился во время выполнения команды"));
-          this.pending.delete(id);
+        this.failPending("Плагин отключился во время выполнения команды");
+        for (const [rid, r] of this.relayed) {
+          clearTimeout(r.timer);
+          r.client.send(JSON.stringify({ type: "result", id: r.id, error: "Плагин отключился во время выполнения команды" }));
+          this.relayed.delete(rid);
         }
       }
     });
   }
 
-  get connected(): boolean {
-    return !!this.socket && this.socket.readyState === WebSocket.OPEN;
+  // Основная копия: команда от вспомогательной → плагину, ответ — обратно.
+  private relay(client: WebSocket, msg: any): void {
+    if (!this.pluginConnected) {
+      client.send(JSON.stringify({ type: "result", id: msg.id, error: PLUGIN_HINT }));
+      return;
+    }
+    const rid = `r${++this.seq}`;
+    const timer = setTimeout(() => this.relayed.delete(rid), BATCH_TIMEOUT_MS);
+    this.relayed.set(rid, { client, id: String(msg.id), timer });
+    this.plugin!.send(JSON.stringify({ id: rid, command: msg.command, params: msg.params ?? {} }));
   }
 
-  status(): string {
-    if (!this.listening) return `Мост не запущен: ${this.lastError || "запуск…"}`;
-    if (!this.connected) {
-      return (
-        "Плагин не подключён. В Figma Desktop: Plugins → Development → Claude for Figma by Dubrovskiy → «Подключить» " +
-        `(адрес ws://localhost:${PORT}).`
-      );
+  private fromPlugin(msg: any): void {
+    const r = this.relayed.get(String(msg.id));
+    if (!r) return this.settle(msg);
+    this.relayed.delete(String(msg.id));
+    clearTimeout(r.timer);
+    if (r.client.readyState === WebSocket.OPEN) {
+      r.client.send(JSON.stringify({ type: "result", id: r.id, result: msg.result, error: msg.error }));
     }
-    return "ok";
+  }
+
+  private settle(msg: any): void {
+    const p = this.pending.get(String(msg.id));
+    if (!p) return;
+    this.pending.delete(String(msg.id));
+    clearTimeout(p.timer);
+    if (msg.error) p.reject(new Error(msg.error));
+    else p.resolve(msg.result);
+  }
+
+  private failPending(reason: string): void {
+    for (const [id, p] of this.pending) {
+      clearTimeout(p.timer);
+      p.reject(new Error(reason));
+      this.pending.delete(id);
+    }
+  }
+
+  private get pluginConnected(): boolean {
+    return !!this.plugin && this.plugin.readyState === WebSocket.OPEN;
+  }
+
+  private get target(): WebSocket | null {
+    if (this.mode === "primary") return this.pluginConnected ? this.plugin : null;
+    if (this.mode === "secondary" && this.upstream?.readyState === WebSocket.OPEN) return this.upstream;
+    return null;
+  }
+
+  // "ok" — можно отправлять. У вспомогательной копии подключение плагина проверяет основная:
+  // если его нет, команда вернётся с подсказкой PLUGIN_HINT.
+  status(): string {
+    if (this.mode === "starting") return `Мост запускается${this.lastError ? `: ${this.lastError}` : "…"}`;
+    if (this.mode === "primary" && !this.pluginConnected) return PLUGIN_HINT;
+    return this.target ? "ok" : "Нет связи с основной копией моста — повторите через несколько секунд";
+  }
+
+  get role(): string {
+    return this.mode;
   }
 
   send(command: string, params: Record<string, unknown> = {}, timeoutMs = COMMAND_TIMEOUT_MS): Promise<any> {
@@ -143,8 +245,16 @@ class PluginLink {
         reject(new Error(`Плагин не ответил за ${Math.round(timeoutMs / 1000)} с на команду ${command}`));
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
-      this.socket!.send(JSON.stringify({ id, command, params }));
+      this.target!.send(JSON.stringify({ id, command, params }));
     });
+  }
+}
+
+function parse(raw: unknown): any {
+  try {
+    return JSON.parse(String(raw));
+  } catch {
+    return null;
   }
 }
 
@@ -192,10 +302,10 @@ server.registerTool(
   async () => {
     try {
       const state = link.status();
-      if (state !== "ok") return json({ connected: false, hint: state });
-      return json({ connected: true, ...(await link.send("get_document_info")) });
+      if (state !== "ok") return json({ connected: false, bridge: link.role, hint: state });
+      return json({ connected: true, bridge: link.role, ...(await link.send("get_document_info")) });
     } catch (e) {
-      return fail(e);
+      return json({ connected: false, bridge: link.role, hint: e instanceof Error ? e.message : String(e) });
     }
   },
 );

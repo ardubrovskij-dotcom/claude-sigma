@@ -7,7 +7,7 @@
     "typecheck": "tsc",
     "pack": "npm run build && mcpb validate mcpb/manifest.json && mcpb pack mcpb claude-sigma.mcpb",
     "start": "npm run build && node mcpb/server/index.js",
-    "test": "npm run build && node test/bridge.test.mjs && node test/e2e.test.mjs"
+    "test": "npm run build && node test/bridge.test.mjs && node test/multi.test.mjs && node test/e2e.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",

@@ -33,12 +33,19 @@ Claude ──MCP (stdio)──► мост ──WebSocket 127.0.0.1:3055──�
 - Подключения с настоящим origin (любой сайт в браузере) отклоняются; принимается только окно плагина Figma (origin `null`).
 - Необязательный токен: задать в настройках расширения и тот же — в окне плагина.
 
-## Claude Code
+## Claude Code (все репозитории)
 
-```bash
-cd bridge && npm install && npm run build
-claude mcp add claude-sigma -- node "$(pwd)/mcpb/server/index.js"
-```
+Чтобы инструменты `figma_*` были в любой сессии Claude Code на этом Mac:
+
+1. Положите скачанную папку `claude-sigma` в постоянное место (например, `~/claude-sigma`) — установщик запоминает путь к мосту.
+2. Двойной щелчок по `bridge/install-claude-code.command` (или `bash bridge/install-claude-code.command`). Скрипт проверит Node.js и пропишет мост на уровне пользователя: через `claude mcp add --scope user`, а без CLI — в `~/.claude.json` с резервной копией.
+3. Перезапустите сессии Claude Code.
+
+Работает только в сессиях, запущенных **на этом компьютере**. Облачная сессия (репозиторий клонирован на сервер) до плагина в Figma не дотянется — для неё навык `project-to-figma` сохраняет команды в `figma-export/*.json`, их вставляют в окно плагина вручную.
+
+## Несколько сессий одновременно
+
+Claude Desktop и каждая сессия Claude Code запускают свою копию моста. Первая занимает порт 3055 (основная), остальные подключаются к ней и отправляют команды через неё; `figma_status` показывает роль (`primary` / `secondary`). Если основная закрывается, порт занимает одна из оставшихся, плагин переподключается сам.
 
 ## Разработка
 
@@ -46,7 +53,7 @@ claude mcp add claude-sigma -- node "$(pwd)/mcpb/server/index.js"
 |---|---|
 | `npm run build` | Сборка `mcpb/server/index.js` |
 | `npm run typecheck` | Проверка типов |
-| `npm test` | Тест моста и полная цепочка в Chromium (MCP → мост → ui.html → code.js) |
+| `npm test` | Тест моста, работа нескольких копий, полная цепочка в Chromium (MCP → мост → ui.html → code.js) |
 | `npm run pack` | Сборка `claude-sigma.mcpb` |
 
 Переменные окружения: `SIGMA_PORT` (по умолчанию 3055), `SIGMA_TOKEN`. Лог — в stderr (в Claude Desktop: **Settings → Developer → Open Logs Folder**, файл `mcp-server-…log` с названием расширения).
@@ -56,6 +63,6 @@ claude mcp add claude-sigma -- node "$(pwd)/mcpb/server/index.js"
 | Симптом | Причина / решение |
 |---|---|
 | `figma_status` → «Плагин не подключён» | Плагин не запущен или не нажато «Подключить» |
-| «порт 3055 занят» | Запущена вторая копия моста — перезапустить Claude Desktop |
+| «порт 3055 занят другой программой» | Порт занят не мостом — сменить порт в настройках расширения и в плагине |
 | Плагин: «Соединение закрыто (4003)» | Токены в плагине и в настройках расширения различаются |
 | Плагин не подключается, мост работает | Порт в плагине и в расширении должен совпадать; другой порт добавить в `figma-plugin/manifest.json` → `devAllowedDomains` |

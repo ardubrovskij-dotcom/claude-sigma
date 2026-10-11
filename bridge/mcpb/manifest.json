@@ -2,7 +2,7 @@
   "manifest_version": "0.2",
   "name": "claude-sigma",
   "display_name": "Claude for Figma by Dubrovskiy",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Рисует в Figma через плагин Claude for Figma by Dubrovskiy: фреймы, текст, векторы, auto layout, слайды.",
   "long_description": "Мост между Claude и плагином Claude for Figma by Dubrovskiy в Figma Desktop. Claude отправляет команды, плагин выполняет их в открытом файле через официальный Plugin API. Плагин нужно запустить в Figma (Plugins → Development → Claude for Figma by Dubrovskiy) и нажать «Подключить».",
   "author": { "name": "Dubrovskiy" },
