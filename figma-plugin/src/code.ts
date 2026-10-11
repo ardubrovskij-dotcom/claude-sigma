@@ -1,4 +1,4 @@
-// Claude Sigma — исполнитель команд внутри Figma.
+// Claude for Figma by Dubrovskiy — исполнитель команд внутри Figma.
 // UI (ui.html) получает команды по WebSocket или из ручной консоли и пересылает
 // их сюда как { type: "command", id, command, params }. Ответ уходит обратно
 // как { type: "result", id, result } или { type: "result", id, error }.

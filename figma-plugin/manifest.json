@@ -1,5 +1,5 @@
 {
-  "name": "Claude Sigma",
+  "name": "Claude for Figma by Dubrovskiy",
   "id": "claude-sigma-dev",
   "api": "1.0.0",
   "main": "dist/code.js",

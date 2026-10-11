@@ -1,6 +1,6 @@
-# Claude Sigma Bridge
+# Claude for Figma Bridge
 
-MCP-сервер, через который Claude (Claude Desktop или Claude Code) управляет плагином Claude Sigma в Figma.
+MCP-сервер, через который Claude (Claude Desktop или Claude Code) управляет плагином Claude for Figma by Dubrovskiy в Figma.
 
 ```
 Claude ──MCP (stdio)──► мост ──WebSocket 127.0.0.1:3055──► окно плагина (ui.html) ──► code.ts ──► макет
@@ -12,8 +12,8 @@ Claude ──MCP (stdio)──► мост ──WebSocket 127.0.0.1:3055──�
 
 1. Claude Desktop → **Settings → Extensions** → **Advanced settings → Install Extension…** (или перетащить файл в окно настроек).
 2. Выбрать `claude-sigma.mcpb` → **Install**. Расширение не подписано — подтвердить установку.
-3. Убедиться, что расширение **Claude Sigma — Figma** включено.
-4. В Figma Desktop запустить плагин (**Plugins → Development → Claude Sigma**) и нажать **Подключить**. Точка станет зелёной.
+3. Убедиться, что расширение **Claude for Figma by Dubrovskiy** включено.
+4. В Figma Desktop запустить плагин (**Plugins → Development → Claude for Figma by Dubrovskiy**) и нажать **Подключить**. Точка станет зелёной.
 5. В новом чате Claude Desktop: «Проверь подключение к Figma» → Claude вызовет `figma_status`.
 
 ## Инструменты
@@ -49,7 +49,7 @@ claude mcp add claude-sigma -- node "$(pwd)/mcpb/server/index.js"
 | `npm test` | Тест моста и полная цепочка в Chromium (MCP → мост → ui.html → code.js) |
 | `npm run pack` | Сборка `claude-sigma.mcpb` |
 
-Переменные окружения: `SIGMA_PORT` (по умолчанию 3055), `SIGMA_TOKEN`. Лог — в stderr (в Claude Desktop: **Settings → Developer → Open Logs Folder**, файл `mcp-server-Claude Sigma — Figma.log`).
+Переменные окружения: `SIGMA_PORT` (по умолчанию 3055), `SIGMA_TOKEN`. Лог — в stderr (в Claude Desktop: **Settings → Developer → Open Logs Folder**, файл `mcp-server-…log` с названием расширения).
 
 ## Неполадки
 

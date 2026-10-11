@@ -1,7 +1,7 @@
 {
   "name": "claude-sigma-bridge",
   "version": "1.0.0",
-  "description": "MCP bridge between Claude and the Claude Sigma Figma plugin",
+  "description": "MCP bridge between Claude and the Claude for Figma by Dubrovskiy Figma plugin",
   "scripts": {
     "build": "esbuild src/index.ts --bundle --platform=node --target=node18 --format=cjs --loader:.md=text --external:bufferutil --external:utf-8-validate --minify --outfile=mcpb/server/index.js",
     "typecheck": "tsc",

@@ -1,4 +1,4 @@
-# Claude Sigma — плагин Figma
+# Claude for Figma by Dubrovskiy — плагин Figma
 
 Плагин выполняет в макете команды в формате JSON: создаёт фреймы, текст, фигуры, векторы, SVG, auto layout, правит и удаляет слои, экспортирует PNG/SVG.
 Команды приходят по WebSocket от локального моста (следующий этап) или вводятся вручную в окне плагина.
@@ -16,7 +16,7 @@ npm run build        # собирает dist/code.js
 ```
 
 В Figma Desktop: **Plugins → Development → Import plugin from manifest…** → выбрать `figma-plugin/manifest.json`.
-Запуск: **Plugins → Development → Claude Sigma**.
+Запуск: **Plugins → Development → Claude for Figma by Dubrovskiy**.
 
 Разработка: `npm run watch` пересобирает при изменениях, `npm run typecheck` проверяет типы, `npm test` прогоняет смоук-тест команд на заглушке API Figma.
 

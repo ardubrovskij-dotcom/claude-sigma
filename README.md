@@ -1,4 +1,4 @@
-# Claude Sigma
+# Claude for Figma by Dubrovskiy
 
 Claude рисует в Figma по текстовому запросу: слайды, фреймворки, схемы, иконки. Работает через официальный Plugin API на любом тарифе Figma.
 
@@ -16,5 +16,5 @@ Claude рисует в Figma по текстовому запросу: слай�
 
 1. **Плагин** — Figma Desktop → меню → **Plugins → Development → Import plugin from manifest…** → `figma-plugin/manifest.json`. Подробнее: [figma-plugin/README.md](figma-plugin/README.md).
 2. **Мост** — двойной щелчок по `bridge/claude-sigma.mcpb` или Claude Desktop → **Settings → Extensions** → установить файл. Подробнее: [bridge/README.md](bridge/README.md).
-3. **Связать** — в Figma запустить плагин Claude Sigma → **Подключить** (точка станет зелёной).
+3. **Связать** — в Figma запустить плагин Claude for Figma by Dubrovskiy → **Подключить** (точка станет зелёной).
 4. **Рисовать** — в Claude Desktop: «Сделай в Figma титульный слайд про …».

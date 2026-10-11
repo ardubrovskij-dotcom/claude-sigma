@@ -1,4 +1,4 @@
-// Claude Sigma Bridge — MCP-сервер для Claude Desktop/Claude Code.
+// Claude for Figma Bridge — MCP-сервер для Claude Desktop/Claude Code.
 // Claude вызывает инструменты по stdio (MCP), мост пересылает команды плагину Figma
 // по WebSocket (ws://127.0.0.1:3055) и возвращает ответ. stdout занят протоколом MCP,
 // поэтому весь лог — только в stderr.
@@ -16,7 +16,7 @@ const PORT = Number(setting(process.env.SIGMA_PORT)) || 3055;
 const TOKEN = setting(process.env.SIGMA_TOKEN);
 const COMMAND_TIMEOUT_MS = 30_000;
 const BATCH_TIMEOUT_MS = 180_000;
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 const ALLOWED_ORIGINS = new Set(["null", "https://www.figma.com"]);
 
 const log = (...args: unknown[]) => console.error("[claude-sigma]", ...args);
@@ -85,7 +85,7 @@ class PluginLink {
         clearTimeout(authTimer);
         if (this.socket && this.socket !== ws) this.socket.close(4000, "replaced");
         this.socket = ws;
-        ws.send(JSON.stringify({ type: "welcome", message: `Claude Sigma Bridge ${VERSION} готов` }));
+        ws.send(JSON.stringify({ type: "welcome", message: `Claude for Figma Bridge ${VERSION} готов` }));
         log("плагин подключён");
         return;
       }
@@ -126,7 +126,7 @@ class PluginLink {
     if (!this.listening) return `Мост не запущен: ${this.lastError || "запуск…"}`;
     if (!this.connected) {
       return (
-        "Плагин не подключён. В Figma Desktop: Plugins → Development → Claude Sigma → «Подключить» " +
+        "Плагин не подключён. В Figma Desktop: Plugins → Development → Claude for Figma by Dubrovskiy → «Подключить» " +
         `(адрес ws://localhost:${PORT}).`
       );
     }
@@ -159,7 +159,7 @@ const fail = (e: unknown) => ({
 });
 
 const instructions = [
-  "Инструменты этого сервера рисуют в открытом файле Figma через плагин Claude Sigma.",
+  "Инструменты этого сервера рисуют в открытом файле Figma через плагин Claude for Figma by Dubrovskiy.",
   "Перед работой вызови figma_status. Строй слайд или блок одним figma_batch, после сборки проверь результат через figma_screenshot.",
   "Ниже — правила команд и вёрстки, соблюдай их.",
   "",
