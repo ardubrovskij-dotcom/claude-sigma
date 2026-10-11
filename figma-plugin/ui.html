@@ -27,21 +27,35 @@
   .dot.on { background: var(--ok); } .dot.wait { background: var(--warn); } .dot.off { background: var(--err); }
   #log { height: 150px; overflow: auto; background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; padding: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; white-space: pre-wrap; word-break: break-word; }
   .e { color: var(--err); } .k { color: var(--ok); } .m { color: var(--muted); }
+  .conn { border: 1px solid var(--border); border-radius: 6px; padding: 8px; margin-top: 8px; }
+  .conn .title { font-weight: 600; }
+  .conn .hint { color: var(--muted); font-size: 11px; margin-top: 4px; }
 </style>
 </head>
 <body>
-  <div class="row" style="justify-content: space-between">
-    <div class="status"><span id="dot" class="dot off"></span><span id="status">Мост не подключён</span></div>
-    <button id="connect">Подключить</button>
+  <h2>Подключения</h2>
+  <div class="conn" id="conn-local">
+    <div class="row" style="justify-content: space-between">
+      <div class="status"><span class="dot off" data-dot></span><span data-status>Компьютер: не подключено</span></div>
+      <button data-toggle>Подключить</button>
+    </div>
+    <div class="row" style="margin-top: 6px"><input id="url" placeholder="ws://localhost:3055" /></div>
+    <div class="row" style="margin-top: 6px">
+      <input id="token" placeholder="Токен моста (необязательно)" />
+      <label class="row m" style="width: auto; white-space: nowrap"><input id="auto" type="checkbox" style="width: auto" /> авто</label>
+    </div>
+    <div class="hint">Claude Desktop и сессии Claude Code на этом компьютере.</div>
   </div>
-
-  <h2>Мост</h2>
-  <div class="row">
-    <input id="url" placeholder="ws://localhost:3055" />
-  </div>
-  <div class="row" style="margin-top: 6px">
-    <input id="token" placeholder="Токен моста (необязательно)" />
-    <label class="row m" style="width: auto; white-space: nowrap"><input id="auto" type="checkbox" style="width: auto" /> авто</label>
+  <div class="conn" id="conn-cloud">
+    <div class="row" style="justify-content: space-between">
+      <div class="status"><span class="dot off" data-dot></span><span data-status>Облако: не подключено</span></div>
+      <button data-toggle>Подключить</button>
+    </div>
+    <div class="row" style="margin-top: 6px">
+      <input id="cloudUrl" placeholder="wss://…workers.dev/ws/<токен>" />
+      <label class="row m" style="width: auto; white-space: nowrap"><input id="cloudAuto" type="checkbox" style="width: auto" /> авто</label>
+    </div>
+    <div class="hint">Облачные сессии Claude Code. Адрес — со стартовой страницы вашего ретранслятора.</div>
   </div>
 
   <h2>Ручная команда</h2>
@@ -67,12 +81,10 @@
 <script>
   const $ = (id) => document.getElementById(id);
   const DEFAULT_URL = "ws://localhost:3055";
-  let ws = null;
-  let wantConnected = false;
-  let retry = 0;
-  let retryTimer = null;
   let seq = 0;
-  const pending = new Map(); // id команды -> { source: "ws" | "manual", started }
+  // Внутренний id команды → откуда пришла. Префикс источника не даёт перепутать одинаковые id
+  // от разных подключений.
+  const pending = new Map(); // key -> { conn | null, id, started }
 
   // ---------- Лог ----------
   function log(text, cls) {
@@ -85,18 +97,13 @@
   }
   const short = (v, n = 300) => { const s = JSON.stringify(v); return s && s.length > n ? s.slice(0, n) + "…" : s; };
 
-  function setStatus(state, text) {
-    $("dot").className = "dot " + state;
-    $("status").textContent = text;
-    $("connect").textContent = wantConnected ? "Отключить" : "Подключить";
-  }
-
   // ---------- Связь с code.ts ----------
   const toPlugin = (msg) => parent.postMessage({ pluginMessage: msg }, "*");
 
-  function runCommand(id, command, params, source) {
-    pending.set(id, { source, started: performance.now() });
-    toPlugin({ type: "command", id, command, params: params || {} });
+  function runCommand(conn, id, command, params) {
+    const key = (conn ? conn.name : "manual") + "|" + id;
+    pending.set(key, { conn, id, started: performance.now() });
+    toPlugin({ type: "command", id: key, command, params: params || {} });
   }
 
   window.onmessage = (event) => {
@@ -106,75 +113,97 @@
     if (msg.type !== "result") return;
     const meta = pending.get(msg.id);
     pending.delete(msg.id);
-    const ms = meta ? Math.round(performance.now() - meta.started) : "?";
-    if (msg.error) log(`✗ ${msg.id} (${ms} мс): ${msg.error}`, "e");
-    else log(`✓ ${msg.id} (${ms} мс): ${short(msg.result)}`, "k");
-    if (meta && meta.source === "ws" && ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "result", id: msg.id, result: msg.result, error: msg.error }));
-    }
+    if (!meta) return;
+    const ms = Math.round(performance.now() - meta.started);
+    const tag = (meta.conn ? meta.conn.label + " " : "") + meta.id;
+    if (msg.error) log(`✗ ${tag} (${ms} мс): ${msg.error}`, "e");
+    else log(`✓ ${tag} (${ms} мс): ${short(msg.result)}`, "k");
+    if (meta.conn) meta.conn.reply({ type: "result", id: meta.id, result: msg.result, error: msg.error });
   };
 
-  // ---------- WebSocket ----------
-  function connect() {
-    clearTimeout(retryTimer);
-    const url = $("url").value.trim() || DEFAULT_URL;
-    setStatus("wait", "Подключение…");
-    try { ws = new WebSocket(url); } catch (e) { log("Ошибка URL: " + e.message, "e"); return scheduleRetry(); }
+  // ---------- Подключения ----------
+  // Одно и то же устройство: локальный мост (Claude Desktop, локальные сессии) и облачный
+  // ретранслятор (облачные сессии). Каждое переподключается само, пока включено.
+  function Connection(name, label, box, getUrl, getToken) {
+    const dot = box.querySelector("[data-dot]");
+    const status = box.querySelector("[data-status]");
+    const toggle = box.querySelector("[data-toggle]");
+    const c = { name, label, want: false, ws: null, retry: 0, timer: null, keepAlive: null };
 
-    ws.onopen = () => {
-      retry = 0;
-      ws.send(JSON.stringify({ type: "hello", role: "figma-plugin", token: $("token").value.trim() || undefined }));
-      setStatus("on", "Подключено: " + url);
-      log("Подключено к " + url, "k");
-    };
-    ws.onmessage = (event) => {
-      let msg;
-      try { msg = JSON.parse(event.data); } catch { return log("Не JSON от моста: " + short(event.data), "e"); }
-      if (msg.type === "ping") return ws.send(JSON.stringify({ type: "pong" }));
-      if (msg.type === "error") return log("Мост: " + msg.message, "e");
-      if (msg.type === "welcome") return log("Мост: " + (msg.message || "готов"), "m");
-      if (!msg.command || msg.id === undefined) return log("Пропущено: " + short(msg), "m");
-      log(`→ ${msg.id} ${msg.command} ${short(msg.params || {}, 160)}`, "m");
-      runCommand(msg.id, msg.command, msg.params, "ws");
-    };
-    ws.onclose = (e) => {
-      ws = null;
-      if (wantConnected) { setStatus("wait", "Нет связи, переподключение…"); scheduleRetry(); }
-      else setStatus("off", "Мост не подключён");
-      if (e.code !== 1000) log(`Соединение закрыто (${e.code})`, "m");
-    };
-    ws.onerror = () => {};
+    function set(state, text) {
+      dot.className = "dot " + state;
+      status.textContent = label + ": " + text;
+      toggle.textContent = c.want ? "Отключить" : "Подключить";
+    }
+    function schedule() {
+      if (!c.want) return;
+      const delay = Math.min(10000, 500 * 2 ** c.retry++);
+      c.timer = setTimeout(open, delay);
+    }
+    function open() {
+      clearTimeout(c.timer);
+      const url = getUrl();
+      if (!url) { c.want = false; set("off", "вставьте адрес"); return; }
+      set("wait", "подключение…");
+      let ws;
+      try { ws = new WebSocket(url); } catch (e) { log(label + ": ошибка адреса — " + e.message, "e"); return schedule(); }
+      c.ws = ws;
+      ws.onopen = () => {
+        c.retry = 0;
+        ws.send(JSON.stringify({ type: "hello", role: "figma-plugin", token: getToken() || undefined }));
+        set("on", "подключено");
+        log("Подключено к " + url, "k");
+        clearInterval(c.keepAlive);
+        c.keepAlive = setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "ping" })); }, 30000);
+      };
+      ws.onmessage = (event) => {
+        let msg;
+        try { msg = JSON.parse(event.data); } catch (e) { return log(label + ": не JSON — " + short(event.data), "e"); }
+        if (msg.type === "ping") return ws.send(JSON.stringify({ type: "pong" }));
+        if (msg.type === "pong") return;
+        if (msg.type === "error") return log(label + ": " + msg.message, "e");
+        if (msg.type === "welcome") return log("Мост: " + (msg.message || "готов"), "m");
+        if (!msg.command || msg.id === undefined) return log(label + ": пропущено " + short(msg), "m");
+        log(`→ ${label} ${msg.id} ${msg.command} ${short(msg.params || {}, 160)}`, "m");
+        runCommand(c, msg.id, msg.command, msg.params);
+      };
+      ws.onclose = (e) => {
+        clearInterval(c.keepAlive);
+        if (c.ws === ws) c.ws = null;
+        if (c.want) { set("wait", "нет связи, переподключение…"); schedule(); }
+        else set("off", "не подключено");
+        if (e.code === 4000) log(label + ": вытеснено другим окном плагина", "m");
+        else if (e.code !== 1000) log(`${label}: соединение закрыто (${e.code})`, "m");
+      };
+      ws.onerror = () => {};
+    }
+    c.start = () => { c.want = true; c.retry = 0; open(); };
+    c.stop = () => { c.want = false; clearTimeout(c.timer); if (c.ws) c.ws.close(1000); set("off", "не подключено"); };
+    c.reply = (o) => { if (c.ws && c.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify(o)); };
+    toggle.onclick = () => { saveSettings(); c.want ? c.stop() : c.start(); };
+    set("off", "не подключено");
+    return c;
   }
 
-  function scheduleRetry() {
-    if (!wantConnected) return;
-    const delay = Math.min(10000, 500 * 2 ** retry++);
-    retryTimer = setTimeout(connect, delay);
-  }
-
-  function disconnect() {
-    wantConnected = false;
-    clearTimeout(retryTimer);
-    if (ws) ws.close(1000);
-    setStatus("off", "Мост не подключён");
-  }
+  const local = Connection("local", "Компьютер", $("conn-local"), () => $("url").value.trim() || DEFAULT_URL, () => $("token").value.trim());
+  const cloud = Connection("cloud", "Облако", $("conn-cloud"), () => $("cloudUrl").value.trim(), () => "");
 
   // ---------- Настройки ----------
-  function settings() { return { url: $("url").value.trim(), token: $("token").value.trim(), auto: $("auto").checked }; }
+  function settings() {
+    return { url: $("url").value.trim(), token: $("token").value.trim(), auto: $("auto").checked,
+      cloudUrl: $("cloudUrl").value.trim(), cloudAuto: $("cloudAuto").checked };
+  }
   function saveSettings() { toPlugin({ type: "save-settings", settings: settings() }); }
   function applySettings(s) {
     $("url").value = s.url || DEFAULT_URL;
     $("token").value = s.token || "";
     $("auto").checked = !!s.auto;
-    if (s.auto) { wantConnected = true; connect(); }
+    $("cloudUrl").value = s.cloudUrl || "";
+    $("cloudAuto").checked = !!s.cloudAuto;
+    if (s.auto) local.start();
+    if (s.cloudAuto && s.cloudUrl) cloud.start();
   }
-
-  $("connect").onclick = () => {
-    saveSettings();
-    if (wantConnected) disconnect();
-    else { wantConnected = true; retry = 0; connect(); }
-  };
-  ["url", "token", "auto"].forEach((id) => $(id).addEventListener("change", saveSettings));
+  ["url", "token", "auto", "cloudUrl", "cloudAuto"].forEach((id) => $(id).addEventListener("change", saveSettings));
 
   // ---------- Ручная консоль ----------
   // Принимает { command, params } или массив таких объектов (выполнится как batch).
@@ -184,10 +213,10 @@
     const id = "m" + ++seq;
     if (Array.isArray(input)) {
       log(`→ ${id} batch (${input.length})`, "m");
-      runCommand(id, "batch", { commands: input }, "manual");
+      runCommand(null, id, "batch", { commands: input });
     } else {
       log(`→ ${id} ${input.command}`, "m");
-      runCommand(id, input.command, input.params, "manual");
+      runCommand(null, id, input.command, input.params);
     }
   };
   $("clear").onclick = () => { $("log").innerHTML = ""; };
@@ -220,7 +249,6 @@
     e.target.value = "";
   };
 
-  setStatus("off", "Мост не подключён");
   toPlugin({ type: "load-settings" });
 </script>
 </body>

@@ -624,7 +624,7 @@ async function execute(command: string, params: Params): Promise<unknown> {
 
 // ---------- Связь с UI ----------
 
-figma.showUI(__html__, { width: 380, height: 560, themeColors: true });
+figma.showUI(__html__, { width: 380, height: 680, themeColors: true });
 
 figma.ui.onmessage = async (msg: any) => {
   if (msg.type === "command") {

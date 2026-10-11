@@ -88,7 +88,7 @@ assert.equal(shot.content[0].type, "image"); assert.equal(shot.content[0].data, 
 
 const uiLog = await page.frameLocator("#ui").locator("#log").innerText();
 assert(uiLog.includes("Подключено к ws://localhost:" + PORT), uiLog);
-assert(/✓ c\d+/.test(uiLog), "команды моста видны в логе плагина");
+assert(/✓ Компьютер c\d+/.test(uiLog), "команды моста видны в логе плагина");
 
 await client.close();
 await browser.close();

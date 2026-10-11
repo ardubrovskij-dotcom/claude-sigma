@@ -590,7 +590,7 @@
     if (!handler) throw new Error(`\u041D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u0430\u044F \u043A\u043E\u043C\u0430\u043D\u0434\u0430: ${command}. \u0421\u043C. list_commands`);
     return handler(params || {});
   }
-  figma.showUI(__html__, { width: 380, height: 560, themeColors: true });
+  figma.showUI(__html__, { width: 380, height: 680, themeColors: true });
   figma.ui.onmessage = async (msg) => {
     if (msg.type === "command") {
       try {

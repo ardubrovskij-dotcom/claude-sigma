@@ -7,6 +7,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { WebSocketServer, WebSocket } from "ws";
 import { z } from "zod";
+import { HttpsProxyAgent } from "https-proxy-agent";
 import guide from "../../.claude/skills/figma-sigma-draw/SKILL.md";
 
 // Claude Desktop подставляет настройки расширения в env; незаполненное поле может прийти
@@ -14,9 +15,12 @@ import guide from "../../.claude/skills/figma-sigma-draw/SKILL.md";
 const setting = (v: string | undefined) => (v && !v.includes("${") ? v.trim() : "");
 const PORT = Number(setting(process.env.SIGMA_PORT)) || 3055;
 const TOKEN = setting(process.env.SIGMA_TOKEN);
+// Облачный режим: вместо локального порта мост подключается к ретранслятору (relay/)
+// по адресу комнаты wss://<хост>/ws/<токен>; плагин на компьютере подключён к той же комнате.
+const RELAY_URL = setting(process.env.SIGMA_RELAY_URL);
 const COMMAND_TIMEOUT_MS = 30_000;
 const BATCH_TIMEOUT_MS = 180_000;
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 const ALLOWED_ORIGINS = new Set(["null", "https://www.figma.com"]);
 
 const log = (...args: unknown[]) => console.error("[claude-sigma]", ...args);
@@ -37,7 +41,8 @@ const PLUGIN_HINT =
   `(адрес ws://localhost:${PORT}).`;
 
 class PluginLink {
-  private mode: "starting" | "primary" | "secondary" = "starting";
+  private mode: "starting" | "primary" | "secondary" | "relay" = "starting";
+  private relayRetry = 0;
   private plugin: WebSocket | null = null; // основная копия: сокет плагина
   private upstream: WebSocket | null = null; // вспомогательная: сокет к основной копии
   private pending = new Map<string, Pending>(); // собственные команды этой копии
@@ -46,7 +51,68 @@ class PluginLink {
   private lastError = "";
 
   start(): void {
-    this.listen();
+    if (RELAY_URL) this.connectRelay();
+    else this.listen();
+  }
+
+  // Облачный режим: держим соединение с ретранслятором, при обрыве переподключаемся с паузой.
+  private connectRelay(): void {
+    let url: URL;
+    try {
+      url = new URL(RELAY_URL);
+    } catch {
+      this.lastError = `SIGMA_RELAY_URL не похож на адрес: ${RELAY_URL}`;
+      return;
+    }
+    const ws = new WebSocket(url, { agent: proxyAgentFor(url) });
+    const noWelcome = setTimeout(() => {
+      this.lastError = "ретранслятор не ответил на приветствие";
+      ws.terminate();
+    }, 10_000);
+    const keepAlive = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "ping" }));
+    }, 25_000);
+    ws.on("open", () => ws.send(JSON.stringify({ type: "hello", role: "bridge-relay" })));
+    ws.on("unexpected-response", (_req, res) => {
+      this.lastError =
+        res.statusCode === 403
+          ? `доступ к ${url.host} запрещён сетевой политикой — добавьте домен в Allowed domains окружения`
+          : res.statusCode === 404
+            ? "неверный адрес комнаты: нужен wss://<хост>/ws/<токен> со стартовой страницы ретранслятора"
+            : `ретранслятор ответил HTTP ${res.statusCode}`;
+      ws.terminate();
+    });
+    ws.on("message", (raw) => {
+      const msg = parse(raw);
+      if (!msg) return;
+      if (msg.type === "welcome") {
+        clearTimeout(noWelcome);
+        this.upstream = ws;
+        this.mode = "relay";
+        this.relayRetry = 0;
+        this.lastError = "";
+        log(`облачный режим: подключён к ретранслятору ${url.host}`);
+      } else if (msg.type === "plugin-gone") {
+        this.failPending("Плагин отключился от ретранслятора во время выполнения команды");
+      } else if (msg.type === "result") {
+        this.settle(msg);
+      }
+    });
+    ws.on("error", (e) => {
+      if (!this.lastError) this.lastError = e.message;
+    });
+    ws.on("close", () => {
+      clearTimeout(noWelcome);
+      clearInterval(keepAlive);
+      if (this.upstream === ws) {
+        this.upstream = null;
+        this.failPending("Связь с ретранслятором оборвалась во время выполнения команды — повторите");
+      }
+      this.mode = "starting";
+      const delay = Math.min(30_000, 1000 * 2 ** this.relayRetry++);
+      log(`нет связи с ретранслятором${this.lastError ? ` (${this.lastError})` : ""}, повтор через ${delay / 1000} с`);
+      setTimeout(() => this.connectRelay(), delay);
+    });
   }
 
   private listen(): void {
@@ -219,14 +285,19 @@ class PluginLink {
 
   private get target(): WebSocket | null {
     if (this.mode === "primary") return this.pluginConnected ? this.plugin : null;
-    if (this.mode === "secondary" && this.upstream?.readyState === WebSocket.OPEN) return this.upstream;
+    if ((this.mode === "secondary" || this.mode === "relay") && this.upstream?.readyState === WebSocket.OPEN) {
+      return this.upstream;
+    }
     return null;
   }
 
   // "ok" — можно отправлять. У вспомогательной копии подключение плагина проверяет основная:
   // если его нет, команда вернётся с подсказкой PLUGIN_HINT.
   status(): string {
-    if (this.mode === "starting") return `Мост запускается${this.lastError ? `: ${this.lastError}` : "…"}`;
+    if (this.mode === "starting") {
+      const what = RELAY_URL ? "Подключение к облачному ретранслятору" : "Мост запускается";
+      return `${what}${this.lastError ? `: ${this.lastError}` : "…"}`;
+    }
     if (this.mode === "primary" && !this.pluginConnected) return PLUGIN_HINT;
     return this.target ? "ok" : "Нет связи с основной копией моста — повторите через несколько секунд";
   }
@@ -248,6 +319,20 @@ class PluginLink {
       this.target!.send(JSON.stringify({ id, command, params }));
     });
   }
+}
+
+// Облачные контейнеры выходят в сеть через HTTPS-прокси; библиотека ws сама его не использует.
+function proxyAgentFor(url: URL): HttpsProxyAgent<string> | undefined {
+  const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
+  if (!proxy) return undefined;
+  const host = url.hostname;
+  const bypass = (process.env.NO_PROXY || process.env.no_proxy || "")
+    .split(",")
+    .map((h) => h.trim().replace(/^\*/, ""))
+    .filter(Boolean)
+    .some((h) => host === h || host === h.replace(/^\./, "") || (h.startsWith(".") && host.endsWith(h)));
+  if (bypass || host === "localhost" || host.startsWith("127.")) return undefined;
+  return new HttpsProxyAgent(proxy);
 }
 
 function parse(raw: unknown): any {
