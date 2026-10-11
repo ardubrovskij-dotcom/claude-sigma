@@ -77,6 +77,20 @@ async function insert(node: SceneNode, p: Params): Promise<void> {
   const parent = await getParent(p.parentId);
   if (typeof p.index === "number") parent.insertChild(p.index, node);
   else parent.appendChild(node);
+  // Новые слои на странице появляются в (0,0) поверх существующих — без явных координат
+  // ставим справа от самого правого слоя.
+  if (parent.type === "PAGE" && p.x === undefined && p.y === undefined) placeOnFreeSpace(node);
+}
+
+function placeOnFreeSpace(node: SceneNode): void {
+  let maxRight: number | null = null;
+  for (const child of figma.currentPage.children) {
+    if (child === node) continue;
+    const right = child.x + child.width;
+    if (maxRight === null || right > maxRight) maxRight = right;
+  }
+  node.x = maxRight === null ? 0 : Math.round(maxRight + 100);
+  node.y = 0;
 }
 
 // ---------- Свойства ----------
@@ -88,7 +102,18 @@ async function applyProps(node: SceneNode, p: Params): Promise<void> {
   if (p.name !== undefined) n.name = p.name;
   if (p.x !== undefined) n.x = p.x;
   if (p.y !== undefined) n.y = p.y;
+  if (node.type === "TEXT") {
+    // Текст по умолчанию WIDTH_AND_HEIGHT: игнорирует заданную ширину и FILL и схлопывается.
+    // Для переноса строк нужен HEIGHT (или NONE при заданной высоте), причём до resize().
+    if (p.textAutoResize !== undefined) node.textAutoResize = p.textAutoResize;
+    else if (node.textAutoResize === "WIDTH_AND_HEIGHT" && (p.width !== undefined || p.layoutSizingHorizontal === "FILL")) {
+      await loadFontsOf(node);
+      node.textAutoResize = p.height !== undefined ? "NONE" : "HEIGHT";
+    }
+  }
+  // resize() сбрасывает режимы размеров auto layout в FIXED, поэтому идёт до них.
   if ((p.width !== undefined || p.height !== undefined) && "resize" in n) {
+    if (node.type === "TEXT") await loadFontsOf(node);
     n.resize(Math.max(0.01, p.width ?? n.width), Math.max(0.01, p.height ?? n.height));
   }
   if (p.rotation !== undefined) n.rotation = p.rotation;
@@ -250,10 +275,22 @@ const brief = (node: BaseNode) => serialize(node, 0);
 
 // ---------- Команды ----------
 
-async function createShape(node: SceneNode, p: Params): Promise<unknown> {
-  await insert(node, p);
-  await applyProps(node, p);
+// Создание без мусора: если параметры не применились, созданный слой удаляется.
+async function created(node: SceneNode, build: () => Promise<void>): Promise<unknown> {
+  try {
+    await build();
+  } catch (e) {
+    if (!node.removed) node.remove();
+    throw e;
+  }
   return brief(node);
+}
+
+async function createShape(node: SceneNode, p: Params): Promise<unknown> {
+  return created(node, async () => {
+    await insert(node, p);
+    await applyProps(node, p);
+  });
 }
 
 const handlers: Record<string, Handler> = {
@@ -358,14 +395,13 @@ const handlers: Record<string, Handler> = {
     const paths = p.paths ?? (p.path ? [{ data: p.path }] : null);
     if (!paths) throw new Error("Нужен paths или path");
     const vector = figma.createVector();
-    vector.vectorPaths = paths.map((v: any) => ({ windingRule: v.windingRule ?? "NONZERO", data: v.data }));
     const { width, height, ...rest } = p; // размер берётся из геометрии пути; width/height масштабируют
-    await insert(vector, rest);
-    await applyProps(vector, rest);
-    if (width !== undefined || height !== undefined) {
-      vector.resize(width ?? vector.width, height ?? vector.height);
-    }
-    return brief(vector);
+    return created(vector, async () => {
+      vector.vectorPaths = paths.map((v: any) => ({ windingRule: v.windingRule ?? "NONZERO", data: v.data }));
+      await insert(vector, rest);
+      await applyProps(vector, rest);
+      if (width !== undefined || height !== undefined) vector.resize(width ?? vector.width, height ?? vector.height);
+    });
   },
 
   async create_svg(p) {
@@ -376,21 +412,17 @@ const handlers: Record<string, Handler> = {
   },
 
   async create_text(p) {
-    const text = figma.createText();
     const font: FontName = { family: p.fontFamily ?? DEFAULT_FONT.family, style: p.fontStyle ?? DEFAULT_FONT.style };
-    await figma.loadFontAsync(font);
-    text.fontName = font;
-    text.characters = String(p.text ?? "");
-    await insert(text, p);
-    const { width, height, ...rest } = p;
-    await applyProps(text, { fill: "#000000", ...rest });
-    if (width !== undefined) {
-      // Фиксированная ширина, высота подстраивается под текст.
-      text.textAutoResize = height !== undefined ? "NONE" : "HEIGHT";
-      text.resize(width, height ?? text.height);
-    }
-    if (p.textAutoResize !== undefined) text.textAutoResize = p.textAutoResize;
-    return brief(text);
+    await figma.loadFontAsync(font); // до createText: при неизвестном шрифте слой не создаётся
+    const text = figma.createText();
+    return created(text, async () => {
+      text.fontName = font;
+      text.characters = String(p.text ?? "");
+      await insert(text, p);
+      // С width текст переносится по строкам, высота подстраивается (см. applyProps).
+      await applyProps(text, { fill: "#000000", ...p });
+      if (text.characters.length > 0 && text.width < 1) throw new Error("Текст схлопнулся по ширине — задайте width");
+    });
   },
 
   async create_component(p) {
@@ -421,8 +453,13 @@ const handlers: Record<string, Handler> = {
 
   async clone_node(p) {
     const source = await getNode(p.id);
-    const copy = source.clone();
+    const copy = source.clone(); // Figma кладёт копию на страницу — возвращаем к оригиналу
     if (p.parentId) await insert(copy, p);
+    else {
+      const parent = source.parent as ParentNode;
+      parent.insertChild(parent.children.indexOf(source) + 1, copy);
+      if (parent.type === "PAGE" && p.x === undefined && p.y === undefined) placeOnFreeSpace(copy);
+    }
     const { id, parentId, index, ...props } = p;
     await applyProps(copy, props);
     return brief(copy);

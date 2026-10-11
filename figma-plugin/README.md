@@ -16,7 +16,9 @@ npm run build        # собирает dist/code.js
 В Figma Desktop: **Plugins → Development → Import plugin from manifest…** → выбрать `figma-plugin/manifest.json`.
 Запуск: **Plugins → Development → Claude Sigma**.
 
-Разработка: `npm run watch` пересобирает при изменениях, `npm run typecheck` проверяет типы.
+Разработка: `npm run watch` пересобирает при изменениях, `npm run typecheck` проверяет типы, `npm test` прогоняет смоук-тест команд на заглушке API Figma.
+
+Для Claude Code в репозитории есть скилл `.claude/skills/figma-sigma-draw` — правила работы с командами плагина и вёрстки слайдов.
 
 ## Устройство
 
@@ -99,6 +101,13 @@ npm run build        # собирает dist/code.js
 - `create_svg` — любая SVG-разметка (иконки, иллюстрации). Рекомендуемый путь.
 - `create_vector` — путь в формате Figma: только абсолютные `M L Q C Z`, числа через пробел (`"M 0 0 L 100 0 L 50 80 Z"`).
 - `create_line` — отрезок `x1, y1 → x2, y2`.
+
+## Поведение по умолчанию
+
+- Слой, созданный на странице без `x`/`y`, ставится на 100 px правее самого правого слоя, а не в (0,0).
+- `clone_node` без `parentId` кладёт копию рядом с оригиналом в том же родителе.
+- Текст с `width` или `layoutSizingHorizontal: "FILL"` переключается на перенос строк (`textAutoResize: HEIGHT`).
+- Если параметры команды `create_*` некорректны, созданный слой удаляется — мусор в макете не остаётся.
 
 ## Ограничения
 
