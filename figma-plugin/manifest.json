@@ -10,7 +10,7 @@
   "documentAccess": "dynamic-page",
   "networkAccess": {
     "allowedDomains": [
-      "*.workers.dev"
+      "wss://*.workers.dev"
     ],
     "reasoning": "Облачный ретранслятор Claude for Figma (Cloudflare Workers) передаёт команды из облачных сессий Claude в этот плагин.",
     "devAllowedDomains": [
