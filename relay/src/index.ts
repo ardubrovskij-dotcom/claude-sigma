@@ -9,7 +9,7 @@
 
 import { landingPage } from "./page";
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 const ROOM_RE = /^\/ws\/([A-Za-z0-9_-]{24,128})$/;
 const NO_PLUGIN =
   "Плагин не подключён к облачному ретранслятору. В Figma: плагин Claude for Figma by Dubrovskiy → блок «Облако» → " +

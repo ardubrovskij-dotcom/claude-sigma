@@ -95,6 +95,8 @@
     while ($("log").childNodes.length > 300) $("log").firstChild.remove();
     $("log").scrollTop = $("log").scrollHeight;
   }
+  // Адрес комнаты ретранслятора содержит секретный токен — в логе показываем только начало.
+  const mask = (url) => String(url).replace(/(\/ws\/[A-Za-z0-9_-]{4})[A-Za-z0-9_-]+/, "$1…");
   const short = (v, n = 300) => { const s = JSON.stringify(v); return s && s.length > n ? s.slice(0, n) + "…" : s; };
 
   // ---------- Связь с code.ts ----------
@@ -152,7 +154,7 @@
         c.retry = 0;
         ws.send(JSON.stringify({ type: "hello", role: "figma-plugin", token: getToken() || undefined }));
         set("on", "подключено");
-        log("Подключено к " + url, "k");
+        log("Подключено к " + mask(url), "k");
         clearInterval(c.keepAlive);
         c.keepAlive = setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "ping" })); }, 30000);
       };

@@ -1,9 +1,10 @@
 // Стартовая страница ретранслятора: генерирует личный токен в браузере и показывает
 // готовые строки для плагина Figma и облачного окружения Claude Code.
 
-// Откуда облачное окружение берёт скрипт настройки. В форке поменяйте на свой репозиторий.
-export const SETUP_SCRIPT_URL =
-  "https://raw.githubusercontent.com/ardubrovskij-dotcom/claude-sigma/claude/modest-brahmagupta-flhzty/cloud/setup.sh";
+// Откуда берутся установщик комплекта и скрипт окружения. В форке поменяйте на свой репозиторий.
+const RAW = "https://raw.githubusercontent.com/ardubrovskij-dotcom/claude-sigma/claude/modest-brahmagupta-flhzty";
+export const INSTALL_URL = `${RAW}/install.sh`;
+export const SETUP_SCRIPT_URL = `${RAW}/cloud/setup.sh`;
 
 export function landingPage(host: string, version: string): string {
   const safeHost = host.replace(/[^A-Za-z0-9.:-]/g, "");
@@ -54,8 +55,15 @@ export function landingPage(host: string, version: string): string {
   </section>
 
   <section>
-    <h2>2. Облачное окружение Claude Code</h2>
-    <p class="hint">В облачной сессии: меню окружения в заголовке сессии → Edit. Настраивается один раз и действует во всех репозиториях этого окружения.</p>
+    <h2>2. Репозиторий</h2>
+    <p class="hint">Скажите Claude в сессии нужного репозитория: «Выполни эту команду, закоммить и запушь» — и вставьте строку. Или выполните её сами в папке репозитория. Потом откройте новую сессию — облачную или на компьютере.</p>
+    <div class="row"><code id="install">…</code><button data-copy="install">Копировать</button></div>
+    <p class="warn" style="margin:10px 0 0">Адрес с токеном сохранится в репозитории (.claude/figma/relay-url). Для публичного репозитория используйте вариант ниже.</p>
+  </section>
+
+  <section>
+    <h2>Вместо этого: облачное окружение целиком</h2>
+    <p class="hint">Для публичных репозиториев или чтобы не коммитить файлы. В облачной сессии: меню окружения в заголовке сессии → Edit; действует во всех репозиториях окружения.</p>
     <div class="field">
       <p class="label">Environment variables — добавить строку</p>
       <div class="row"><code id="env">…</code><button data-copy="env">Копировать</button></div>
@@ -71,10 +79,10 @@ export function landingPage(host: string, version: string): string {
   </section>
 
   <section>
-    <h2>3. Проверка</h2>
+    <h2>Проверка</h2>
     <ol>
       <li>В плагине у блока «Облако» зелёная точка.</li>
-      <li>Новая облачная сессия в любом репозитории: «Проверь подключение к Figma».</li>
+      <li>Новая сессия в репозитории: «Проверь подключение к Figma».</li>
       <li>Ответ: <code style="display:inline;padding:2px 6px">connected: true</code>, <code style="display:inline;padding:2px 6px">bridge: relay</code>.</li>
     </ol>
   </section>
@@ -94,6 +102,7 @@ export function landingPage(host: string, version: string): string {
     document.getElementById("token").textContent = token;
     document.getElementById("room").textContent = room;
     document.getElementById("env").textContent = "SIGMA_RELAY_URL=" + room;
+    document.getElementById("install").textContent = "curl -fsSL ${INSTALL_URL} | bash -s -- '" + room + "'";
   }
   let token = load();
   if (!token) { token = newToken(); save(token); }

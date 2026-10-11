@@ -89,7 +89,8 @@ const shot = await call("figma_screenshot", { id: frame.id });
 assert.equal(shot.content[0].type, "image"); assert.equal(shot.content[0].data, "iVBORw==");
 
 const uiLog = await page.frameLocator("#ui").locator("#log").innerText();
-assert(uiLog.includes("Подключено к " + ROOM), uiLog);
+assert(uiLog.includes("Подключено к " + ROOM.replace(/(\/ws\/.{4}).*/, "$1…")), uiLog);
+assert(!uiLog.includes(ROOM.split("/ws/")[1]), "токен не виден в логе");
 assert(/✓ Облако \w+:c\d+/.test(uiLog), "команды из облака видны в логе плагина: " + uiLog);
 assert.equal(status.bridge, "relay");
 
