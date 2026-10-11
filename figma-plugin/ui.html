@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<style>
+  :root {
+    --bg: var(--figma-color-bg, #fff);
+    --bg2: var(--figma-color-bg-secondary, #f5f5f5);
+    --text: var(--figma-color-text, #111);
+    --muted: var(--figma-color-text-secondary, #666);
+    --border: var(--figma-color-border, #e3e3e3);
+    --accent: var(--figma-color-bg-brand, #0d99ff);
+    --ok: #14ae5c;
+    --err: #f24822;
+    --warn: #ffa629;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 12px; font: 12px/1.4 Inter, system-ui, sans-serif; background: var(--bg); color: var(--text); }
+  h2 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 14px 0 6px; }
+  .row { display: flex; gap: 6px; align-items: center; }
+  input, textarea, select { width: 100%; font: inherit; color: var(--text); background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; }
+  textarea { font-family: ui-monospace, Menlo, monospace; font-size: 11px; resize: vertical; min-height: 110px; }
+  button { font: inherit; font-weight: 500; border: 0; border-radius: 4px; padding: 6px 10px; cursor: pointer; background: var(--accent); color: #fff; white-space: nowrap; }
+  button.secondary { background: var(--bg2); color: var(--text); border: 1px solid var(--border); }
+  .status { display: flex; align-items: center; gap: 6px; font-weight: 500; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.on { background: var(--ok); } .dot.wait { background: var(--warn); } .dot.off { background: var(--err); }
+  #log { height: 150px; overflow: auto; background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; padding: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; white-space: pre-wrap; word-break: break-word; }
+  .e { color: var(--err); } .k { color: var(--ok); } .m { color: var(--muted); }
+</style>
+</head>
+<body>
+  <div class="row" style="justify-content: space-between">
+    <div class="status"><span id="dot" class="dot off"></span><span id="status">Мост не подключён</span></div>
+    <button id="connect">Подключить</button>
+  </div>
+
+  <h2>Мост</h2>
+  <div class="row">
+    <input id="url" placeholder="ws://localhost:3055" />
+  </div>
+  <div class="row" style="margin-top: 6px">
+    <input id="token" placeholder="Токен моста (необязательно)" />
+    <label class="row m" style="width: auto; white-space: nowrap"><input id="auto" type="checkbox" style="width: auto" /> авто</label>
+  </div>
+
+  <h2>Ручная команда</h2>
+  <div class="row" style="margin-bottom: 6px">
+    <select id="example">
+      <option value="">— пример —</option>
+      <option value="ping">ping</option>
+      <option value="slide">Слайд 1920×1080 с заголовком</option>
+      <option value="cards">Три карточки (auto layout)</option>
+      <option value="svg">Иконка из SVG</option>
+      <option value="selection">Что выделено</option>
+    </select>
+  </div>
+  <textarea id="cmd" spellcheck="false">{ "command": "ping" }</textarea>
+  <div class="row" style="margin-top: 6px; justify-content: flex-end">
+    <button class="secondary" id="clear">Очистить лог</button>
+    <button id="run">Выполнить</button>
+  </div>
+
+  <h2>Лог</h2>
+  <div id="log"></div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const DEFAULT_URL = "ws://localhost:3055";
+  let ws = null;
+  let wantConnected = false;
+  let retry = 0;
+  let retryTimer = null;
+  let seq = 0;
+  const pending = new Map(); // id команды -> { source: "ws" | "manual", started }
+
+  // ---------- Лог ----------
+  function log(text, cls) {
+    const line = document.createElement("div");
+    if (cls) line.className = cls;
+    line.textContent = `${new Date().toLocaleTimeString()}  ${text}`;
+    $("log").appendChild(line);
+    while ($("log").childNodes.length > 300) $("log").firstChild.remove();
+    $("log").scrollTop = $("log").scrollHeight;
+  }
+  const short = (v, n = 300) => { const s = JSON.stringify(v); return s && s.length > n ? s.slice(0, n) + "…" : s; };
+
+  function setStatus(state, text) {
+    $("dot").className = "dot " + state;
+    $("status").textContent = text;
+    $("connect").textContent = wantConnected ? "Отключить" : "Подключить";
+  }
+
+  // ---------- Связь с code.ts ----------
+  const toPlugin = (msg) => parent.postMessage({ pluginMessage: msg }, "*");
+
+  function runCommand(id, command, params, source) {
+    pending.set(id, { source, started: performance.now() });
+    toPlugin({ type: "command", id, command, params: params || {} });
+  }
+
+  window.onmessage = (event) => {
+    const msg = event.data && event.data.pluginMessage;
+    if (!msg) return;
+    if (msg.type === "settings") return applySettings(msg.settings);
+    if (msg.type !== "result") return;
+    const meta = pending.get(msg.id);
+    pending.delete(msg.id);
+    const ms = meta ? Math.round(performance.now() - meta.started) : "?";
+    if (msg.error) log(`✗ ${msg.id} (${ms} мс): ${msg.error}`, "e");
+    else log(`✓ ${msg.id} (${ms} мс): ${short(msg.result)}`, "k");
+    if (meta && meta.source === "ws" && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "result", id: msg.id, result: msg.result, error: msg.error }));
+    }
+  };
+
+  // ---------- WebSocket ----------
+  function connect() {
+    clearTimeout(retryTimer);
+    const url = $("url").value.trim() || DEFAULT_URL;
+    setStatus("wait", "Подключение…");
+    try { ws = new WebSocket(url); } catch (e) { log("Ошибка URL: " + e.message, "e"); return scheduleRetry(); }
+
+    ws.onopen = () => {
+      retry = 0;
+      ws.send(JSON.stringify({ type: "hello", role: "figma-plugin", token: $("token").value.trim() || undefined }));
+      setStatus("on", "Подключено: " + url);
+      log("Подключено к " + url, "k");
+    };
+    ws.onmessage = (event) => {
+      let msg;
+      try { msg = JSON.parse(event.data); } catch { return log("Не JSON от моста: " + short(event.data), "e"); }
+      if (msg.type === "ping") return ws.send(JSON.stringify({ type: "pong" }));
+      if (msg.type === "error") return log("Мост: " + msg.message, "e");
+      if (msg.type === "welcome") return log("Мост: " + (msg.message || "готов"), "m");
+      if (!msg.command || msg.id === undefined) return log("Пропущено: " + short(msg), "m");
+      log(`→ ${msg.id} ${msg.command} ${short(msg.params || {}, 160)}`, "m");
+      runCommand(msg.id, msg.command, msg.params, "ws");
+    };
+    ws.onclose = (e) => {
+      ws = null;
+      if (wantConnected) { setStatus("wait", "Нет связи, переподключение…"); scheduleRetry(); }
+      else setStatus("off", "Мост не подключён");
+      if (e.code !== 1000) log(`Соединение закрыто (${e.code})`, "m");
+    };
+    ws.onerror = () => {};
+  }
+
+  function scheduleRetry() {
+    if (!wantConnected) return;
+    const delay = Math.min(10000, 500 * 2 ** retry++);
+    retryTimer = setTimeout(connect, delay);
+  }
+
+  function disconnect() {
+    wantConnected = false;
+    clearTimeout(retryTimer);
+    if (ws) ws.close(1000);
+    setStatus("off", "Мост не подключён");
+  }
+
+  // ---------- Настройки ----------
+  function settings() { return { url: $("url").value.trim(), token: $("token").value.trim(), auto: $("auto").checked }; }
+  function saveSettings() { toPlugin({ type: "save-settings", settings: settings() }); }
+  function applySettings(s) {
+    $("url").value = s.url || DEFAULT_URL;
+    $("token").value = s.token || "";
+    $("auto").checked = !!s.auto;
+    if (s.auto) { wantConnected = true; connect(); }
+  }
+
+  $("connect").onclick = () => {
+    saveSettings();
+    if (wantConnected) disconnect();
+    else { wantConnected = true; retry = 0; connect(); }
+  };
+  ["url", "token", "auto"].forEach((id) => $(id).addEventListener("change", saveSettings));
+
+  // ---------- Ручная консоль ----------
+  // Принимает { command, params } или массив таких объектов (выполнится как batch).
+  $("run").onclick = () => {
+    let input;
+    try { input = JSON.parse($("cmd").value); } catch (e) { return log("JSON: " + e.message, "e"); }
+    const id = "m" + ++seq;
+    if (Array.isArray(input)) {
+      log(`→ ${id} batch (${input.length})`, "m");
+      runCommand(id, "batch", { commands: input }, "manual");
+    } else {
+      log(`→ ${id} ${input.command}`, "m");
+      runCommand(id, input.command, input.params, "manual");
+    }
+  };
+  $("clear").onclick = () => { $("log").innerHTML = ""; };
+
+  const EXAMPLES = {
+    ping: { command: "ping" },
+    selection: { command: "get_selection", params: { depth: 1 } },
+    slide: [
+      { command: "create_frame", params: { name: "Slide 01", width: 1920, height: 1080, fill: { type: "linear", stops: ["#0F172A", "#1E293B"], angle: 90 } } },
+      { command: "create_text", params: { parentId: "$0", text: "Заголовок слайда", x: 120, y: 120, width: 1200, fontFamily: "Inter", fontStyle: "Bold", fontSize: 96, lineHeight: "110%", fill: "#F8FAFC" } },
+      { command: "create_text", params: { parentId: "$0", text: "Подзаголовок: тезис в одну строку", x: 120, y: 300, width: 1200, fontSize: 40, fill: "#94A3B8" } },
+      { command: "create_rectangle", params: { parentId: "$0", x: 120, y: 420, width: 160, height: 8, cornerRadius: 4, fill: "#38BDF8" } },
+      { command: "select", params: { ids: ["$0"] } }
+    ],
+    cards: [
+      { command: "create_frame", params: { name: "Cards", layoutMode: "HORIZONTAL", itemSpacing: 24, padding: 32, primaryAxisSizingMode: "AUTO", counterAxisSizingMode: "AUTO", fill: "#F1F5F9", cornerRadius: 16 } },
+      { command: "create_frame", params: { parentId: "$0", name: "Card 1", width: 280, height: 180, fill: "#FFFFFF", cornerRadius: 12, effects: [{ type: "shadow", color: "#0F172A1A", y: 8, blur: 24 }] } },
+      { command: "clone_node", params: { id: "$1", parentId: "$0", name: "Card 2" } },
+      { command: "clone_node", params: { id: "$1", parentId: "$0", name: "Card 3" } },
+      { command: "select", params: { ids: ["$0"] } }
+    ],
+    svg: [
+      { command: "create_svg", params: { name: "Icon / Check", svg: "<svg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 24 24' fill='none' stroke='#14AE5C' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'/><path d='m8 12 3 3 5-6'/></svg>" } },
+      { command: "select", params: { ids: ["$0"] } }
+    ]
+  };
+  $("example").onchange = (e) => {
+    const ex = EXAMPLES[e.target.value];
+    if (ex) $("cmd").value = JSON.stringify(ex, null, 2);
+    e.target.value = "";
+  };
+
+  setStatus("off", "Мост не подключён");
+  toPlugin({ type: "load-settings" });
+</script>
+</body>
+</html>
