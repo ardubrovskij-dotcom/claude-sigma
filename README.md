@@ -37,6 +37,8 @@ Claude Desktop / локальный Claude Code ── мост ─────�
 
    [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ardubrovskij-dotcom/claude-sigma/tree/claude/modest-brahmagupta-flhzty/relay)
 
+   Если Cloudflare подключил сам репозиторий и сборка упала: проект → **Settings → Build** → ветка (Production branch) `claude/modest-brahmagupta-flhzty`, Root directory `/` → Save → **Deployments → Retry build** (или новый пуш).
+
    Не сработала кнопка — вручную: `cd ~/claude-sigma/relay && npm install && npx wrangler login && npx wrangler deploy`.
 2. **Токен.** Открыть адрес ретранслятора (`https://claude-figma-relay.<имя>.workers.dev`) — страница создаст личный токен и покажет все строки ниже с кнопками «Копировать».
 3. **Плагин.** В Figma, блок «Облако»: вставить адрес комнаты → «авто» → «Подключить».
