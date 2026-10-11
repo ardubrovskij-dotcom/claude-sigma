@@ -13,10 +13,16 @@ Claude рисует в Figma по текстовому запросу: слай�
 | `.claude/skills/figma-sigma-draw/` | Правила команд и вёрстки слайдов (встроены и в мост) |
 | `skills/project-to-figma/` | Навык: контекст проекта → стиль → бриф → макет в Figma ([skills/README.md](skills/README.md)) |
 
-## Установка (macOS / Windows)
+## Установка и обновление (macOS)
 
-1. **Плагин** — Figma Desktop → меню → **Plugins → Development → Import plugin from manifest…** → `figma-plugin/manifest.json`. Подробнее: [figma-plugin/README.md](figma-plugin/README.md).
-2. **Мост** — двойной щелчок по `bridge/claude-sigma.mcpb` или Claude Desktop → **Settings → Extensions** → установить файл. Подробнее: [bridge/README.md](bridge/README.md).
-3. **Связать** — в Figma запустить плагин Claude for Figma by Dubrovskiy → **Подключить** (точка станет зелёной).
-4. **Навык** — Claude Desktop → **Settings → Capabilities → Skills → Upload skill** → `skills/dist/project-to-figma.zip`.
-5. **Рисовать** — в проекте Claude Desktop: «Сделай 5 слайдов питча по нашему проекту» → Claude покажет бриф → «ок» → макет в Figma.
+1. Скачать: https://github.com/ardubrovskij-dotcom/claude-sigma/archive/refs/heads/claude/modest-brahmagupta-flhzty.zip и распаковать.
+2. Дважды щёлкнуть **`setup.command`** (macOS не даёт — правый щелчок → «Открыть»). Он перенесёт папку в `~/claude-sigma`, подключит мост к Claude Code во всех репозиториях и откроет установку расширения.
+3. В Claude Desktop нажать **Install**.
+4. Только при первой установке — в Figma: **Plugins → Development → Import plugin from manifest…** → ⌘⇧G → ⌘V (путь уже в буфере) → Enter.
+5. В плагине: галочка **«авто»** → **Подключить**.
+
+Обновление — те же шаги 1–3: новый ZIP и `setup.command`; в Figma ничего не нужно.
+
+Навык `project-to-figma` — Claude Desktop → **Settings → Capabilities → Skills → Upload skill** → `~/claude-sigma/skills/dist/project-to-figma.zip` (один раз).
+
+Подробно: [figma-plugin/README.md](figma-plugin/README.md), [bridge/README.md](bridge/README.md), [skills/README.md](skills/README.md).
